@@ -62,18 +62,16 @@ local function trigger_hud_popup(player, xp_amount, type_label)
     if type_label == "lumberjack" then color = 0x7cdb54 end -- Green
     if type_label == "farming" then color = 0xe2a45c end    -- Yellow
     
-    -- Add temporary text element at the top center of the screen
     local hud_id = player:hud_add({
         hud_elem_type = "text",
-        position = {x = 0.5, y = 0.15}, -- 50% across, 15% down from top
-        alignment = {x = 0, y = 0},     -- Perfectly centered
+        position = {x = 0.5, y = 0.15},
+        alignment = {x = 0, y = 0},
         offset = {x = 0, y = 0},
         number = color,
         text = text,
         scale = {x = 100, y = 100},
     })
     
-    -- Auto-delete the HUD text after 1.5 seconds so it doesn't linger
     minetest.after(1.5, function()
         if player and player:is_player() then
             player:hud_remove(hud_id)
@@ -98,7 +96,6 @@ function mastery.add_xp(player, category, amount)
         data[lvl_key] = data[lvl_key] + 1
         data[req_key] = math.floor(mastery.config.base_sub_xp * (data[lvl_key] ^ mastery.config.sub_exponent))
         
-        -- Send Level 1 & 2 alerts straight to private chat logs!
         minetest.chat_send_player(name, minetest.colorize("#7cdb54", "[Mastery] Your " .. string.upper(category) .. " skill advanced to Level " .. data[lvl_key] .. "!"))
     end
     
@@ -109,12 +106,116 @@ function mastery.add_xp(player, category, amount)
         data.main_level = data.main_level + 1
         data.main_xp_needed = math.floor(mastery.config.base_main_xp * (data.main_level ^ mastery.config.main_exponent))
         
-        -- Server-wide milestone broadcast
         minetest.chat_send_all(minetest.colorize("#f7cb43", "[Techblox] " .. name .. " has achieved Main Level " .. data.main_level .. "!"))
     end
     
     save_all_data()
 end
+
+-- ==========================================
+--          FORMSPEC FORMS GENERATOR
+-- ==========================================
+
+-- Personal Statistics GUI Formspec
+local function show_personal_stats_form(player_name)
+    local data = mastery.init_player(player_name)
+    
+    -- Progress Bar width calculation logic
+    local function get_progress_bar(current, max)
+        local percentage = math.min(100, math.floor((current / max) * 100))
+        return "box[2.5,0.4;5.0,0.15;#333333]box[2.5,0.4;" .. (5.0 * (percentage / 100)) .. ",0.15;#7cdb54]"
+    end
+
+    local form = "size[8,6.5]" ..
+        "background[0,0;8,6.5;techblox_mastery_bg.png;true]" ..
+        "label[2.8,0.5;" .. minetest.formspec_escape("=== TECHBLOX PROFILE ===") .. "]" ..
+        
+        -- Main Character Level Track
+        "label[0.5,1.5;MAIN LEVEL:]" ..
+        "label[2.5,1.5;" .. data.main_level .. "  (" .. data.main_xp .. " / " .. data.main_xp_needed .. " XP)]" ..
+        
+        -- Individual Sub-Mastery Stats
+        "label[0.5,2.7;" .. minetest.colorize("#54b6db", "MINING:") .. "]" ..
+        "label[2.5,2.7;Lvl " .. data.mining_lvl .. "  (" .. data.mining_xp .. " / " .. data.mining_xp_needed .. " XP)]" ..
+        
+        "label[0.5,3.7;" .. minetest.colorize("#7cdb54", "LUMBERJACK:") .. "]" ..
+        "label[2.5,3.7;Lvl " .. data.lumberjack_lvl .. "  (" .. data.lumberjack_xp .. " / " .. data.lumberjack_xp_needed .. " XP)]" ..
+        
+        "label[0.5,4.7;" .. minetest.colorize("#e2a45c", "FARMING:") .. "]" ..
+        "label[2.5,4.7;Lvl " .. data.farming_lvl .. "  (" .. data.farming_xp .. " / " .. data.farming_xp_needed .. " XP)]" ..
+        
+        "button_exit[2.5,5.7;3,0.8;close;Close Menu]"
+        
+    minetest.show_formspec(player_name, "techblox_mastery:personal", form)
+end
+
+-- Global Leaderboards GUI Formspec (Accepts active selection modes)
+local function show_leaderboard_form(player_name, view_mode)
+    view_mode = view_mode or "main"
+    
+    -- Translate mode strings to internal database keys
+    local db_keys = {
+        main = {key = "main_level", title = "Global Main Levels", color = "#f7cb43"},
+        mining = {key = "mining_lvl", title = "Top Miners", color = "#54b6db"},
+        lumberjack = {key = "lumberjack_lvl", title = "Top Lumberjacks", color = "#7cdb54"},
+        farming = {key = "farming_lvl", title = "Top Farmers", color = "#e2a45c"}
+    }
+    
+    local current = db_keys[view_mode]
+    local top_list = get_top_players(current.key)
+    
+    -- Setup sizing base
+    local form = "size[9,7.5]" ..
+        "background[0,0;9,7.5;techblox_leaderboard_bg.png;true]" ..
+        
+        -- 4 Top Toggle Buttons (Acting as custom navigation tabs)
+        "button[0.2,0.3;2,0.8;tab_main;Main Level]" ..
+        "button[2.4,0.3;2,0.8;tab_mining;Mining]" ..
+        "button[4.6,0.3;2,0.8;tab_lumberjack;Lumberjack]" ..
+        "button[6.8,0.3;2,0.8;tab_farming;Farming]" ..
+        
+        -- Header text elements
+        "label[0.5,1.6;" .. minetest.formspec_escape(minetest.colorize(current.color, "=== LEADERBOARD: " .. string.upper(current.title) .. " ===")) .. "]"
+        
+    -- Render Top 10 slots dynamically if records exist
+    local y_pos = 2.3
+    for i = 1, 10 do
+        local entry = top_list[i]
+        local row_text = " " .. i .. ". "
+        
+        if entry then
+            row_text = row_text .. entry.name .. " - (Level " .. entry.level .. ")"
+        else
+            row_text = row_text .. "---"
+        end
+        
+        form = form .. "label[0.8," .. y_pos .. ";" .. minetest.formspec_escape(row_text) .. "]"
+        y_pos = y_pos + 0.45
+    end
+    
+    form = form .. "button_exit[3,7.0;3,0.6;close;Exit Leaders]"
+    
+    minetest.show_formspec(player_name, "techblox_mastery:leaderboard", form)
+end
+
+-- Formspec submission handlers 
+minetest.register_on_player_receive_fields(function(player, formname, fields)
+    if not player or not player:is_player() then return end
+    local name = player:get_player_name()
+    
+    -- Only respond to interactions matching our custom mod namespace
+    if formname == "techblox_mastery:leaderboard" then
+        if fields.tab_main then
+            show_leaderboard_form(name, "main")
+        elseif fields.tab_mining then
+            show_leaderboard_form(name, "mining")
+        elseif fields.tab_lumberjack then
+            show_leaderboard_form(name, "lumberjack")
+        elseif fields.tab_farming then
+            show_leaderboard_form(name, "farming")
+        end
+    end
+end)
 
 -- ==========================================
 --            ENGINE HOOKS & EVENTS
@@ -125,7 +226,6 @@ minetest.register_on_dignode(function(pos, oldnode, digger)
     
     local node_name = oldnode.name
     
-    -- Group evaluations (Works for fists, standard tools, and modded elements)
     local is_tree = minetest.get_item_group(node_name, "tree") > 0 or minetest.get_item_group(node_name, "log") > 0
     local is_crop = minetest.get_item_group(node_name, "crop") > 0 or minetest.get_item_group(node_name, "cropex") > 0 or minetest.get_item_group(node_name, "flora") > 0 or minetest.get_item_group(node_name, "plant") > 0
     
@@ -139,7 +239,6 @@ minetest.register_on_dignode(function(pos, oldnode, digger)
         mastery_type = "farming"
         xp_reward = 8
     else
-        -- Every block dug outside of farming/trees feeds directly into mining
         mastery_type = "mining"
         xp_reward = 1
     end
@@ -158,47 +257,15 @@ end)
 
 minetest.register_chatcommand("level", {
     params = "[top]",
-    description = "Check your mastery levels or view the global leaderboards",
+    description = "Check your personal mastery stats or view global ranking formspecs",
     func = function(name, param)
-        local data = mastery.init_player(name)
-        
         if param == "top" then
-            local main_top = get_top_players("main_level")
-            local mine_top = get_top_players("mining_lvl")
-            local wood_top = get_top_players("lumberjack_lvl")
-            local farm_top = get_top_players("farming_lvl")
-            
-            local out = {}
-            table.insert(out, minetest.colorize("#f7cb43", "=== TECHBLOX GLOBAL LEADERS ==="))
-            
-            local function add_leader_line(title, color, dataset)
-                table.insert(out, minetest.colorize(color, "--- " .. title .. " ---"))
-                for i = 1, 3 do
-                    if dataset[i] then
-                        table.insert(out, " " .. i .. ". " .. dataset[i].name .. " (Lvl " .. dataset[i].level .. ")")
-                    else
-                        table.insert(out, " " .. i .. ". ---")
-                    end
-                end
-            end
-            
-            add_leader_line("MAIN LEVEL OVERALL", "#f7cb43", main_top)
-            add_leader_line("MINING MASTERY", "#54b6db", mine_top)
-            add_leader_line("LUMBERJACK MASTERY", "#7cdb54", wood_top)
-            add_leader_line("FARMING MASTERY", "#e2a45c", farm_top)
-            
-            return true, table.concat(out, "\n")
+            -- Open the dashboard starting on the global Main Level tab view
+            show_leaderboard_form(name, "main")
+        else
+            -- Default window showing individual level specs
+            show_personal_stats_form(name)
         end
-        
-        local msg = {
-            minetest.colorize("#f7cb43", "=== YOUR SKILL LEVELS ==="),
-            " Main Level: " .. data.main_level .. " [" .. data.main_xp .. "/" .. data.main_xp_needed .. " XP]",
-            minetest.colorize("#54b6db", " Mining Level: ") .. data.mining_lvl .. " [" .. data.mining_xp .. "/" .. data.mining_xp_needed .. " XP]",
-            minetest.colorize("#7cdb54", " Lumberjack Level: ") .. data.lumberjack_lvl .. " [" .. data.lumberjack_xp .. "/" .. data.lumberjack_xp_needed .. " XP]",
-            minetest.colorize("#e2a45c", " Farming Level: ") .. data.farming_lvl .. " [" .. data.farming_xp .. "/" .. data.farming_xp_needed .. " XP]",
-            minetest.colorize("#aaaaaa", "Type '/level top' to see the global leaderboard!")
-        }
-        
-        return true, table.concat(msg, "\n")
+        return true
     end,
 })
